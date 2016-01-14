@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" 
+xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" 
+xmlns:metadata="http://www.mulesoft.org/schema/mule/metadata" 
+xmlns:data-mapper="http://www.mulesoft.org/schema/mule/ee/data-mapper"
+xmlns:json="http://www.mulesoft.org/schema/mule/json" 
+xmlns:vm="http://www.mulesoft.org/schema/mule/vm" 
+xmlns:file="http://www.mulesoft.org/schema/mule/file" 
+xmlns:jersey="http://www.mulesoft.org/schema/mule/jersey" 
+xmlns:http="http://www.mulesoft.org/schema/mule/http" 
+xmlns:batch="http://www.mulesoft.org/schema/mule/batch" 
+xmlns:mongo="http://www.mulesoft.org/schema/mule/mongo" 
+xmlns="http://www.mulesoft.org/schema/mule/core" 
+xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/mongo http://www.mulesoft.org/schema/mule/mongo/current/mule-mongo.xsd
+http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd
+http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/jersey http://www.mulesoft.org/schema/mule/jersey/current/mule-jersey.xsd
+http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
+http://www.mulesoft.org/schema/mule/ee/data-mapper http://www.mulesoft.org/schema/mule/ee/data-mapper/current/mule-data-mapper.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd">
+   
+    <!-- <http:listener-config name="HTTP_Listener_Configuration" host="0.0.0.0" port="8081" doc:name="HTTP Listener Configuration"/> -->
+    
+    <mongo:config name="Mongo_DB" username="admin" database="test" doc:name="Mongo DB"/>
+    <sub-flow name="Read_Staging_DB">
+        <mongo:find-objects-using-query-map config-ref="Mongo_DB" collection="mycol" doc:name="Mongo DB">
+            <mongo:query-attributes>
+                <mongo:query-attribute key="name">Pragyan</mongo:query-attribute>
+            </mongo:query-attributes>
+            <mongo:fields>
+                <mongo:field>name</mongo:field>
+                <mongo:field>title</mongo:field>
+            </mongo:fields>
+        </mongo:find-objects-using-query-map>
+        <mongo:mongo-collection-to-json doc:name="Mongo DB"/>
+        <component class="mapper.JsonJava" doc:name="Json to Java Mapper"/>
+    </sub-flow>
+    <sub-flow name="Write_Final_DB">
+        <foreach collection="#[payload]" doc:name="For Each">
+            <component class="mapper.JavaJson" doc:name="Java to Json Mapper"/>
+            <mongo:json-to-dbobject doc:name="Mongo DB"/>
+            <mongo:insert-object config-ref="Mongo_DB" collection="mycol2" doc:name="Mongo DB"/>
+        </foreach>
+    </sub-flow>
+
+<flow name="mymuleFlow">
+        <!-- <http:listener config-ref="HTTP_Listener_Configuration" path="/start" doc:name="HTTP"/> -->
+        <http:inbound-endpoint exchange-pattern="request-response" host="localhost" port="8081" doc:name="HTTP"/>
+        <response>
+            <http:static-resource-handler resourceBase="${app.home}/web" defaultFile="index.html" doc:name="HTTP Static Resource Handler"/>
+        </response>
+
+        <set-payload value="#[message.inboundProperties.'http.query.params'.lob]" doc:name="Set Payload"/>
+        <logger message="#[payload]" level="INFO" doc:name="Logger"/>
+        <choice doc:name="Choice">
+            <when expression="#[payload=='A']">
+                <async doc:name="Async">
+                    <logger message="#[payload]" level="DEBUG" doc:name="Logger"/>
+                    <batch:execute name="mulebatchflowBatch_Step_1" doc:name="mulebatchflowBatch_Step_1"/>
+                </async>
+            </when>
+            <otherwise>
+                <logger level="INFO" doc:name="Logger"/>
+                <component class="flow.ShowError" doc:name="Java"/>
+            </otherwise>
+        </choice>
+        <logger level="INFO" doc:name="Logger"/>
+        <!-- <set-payload doc:name="Set Payload"/> -->
+    </flow>
+    <batch:job name="mulebatchflowBatch_Step_1">
+        <batch:input>
+            <flow-ref name="Read_Staging_DB" doc:name="Read Staging DB"/>
+
+        </batch:input>
+        <batch:process-records>
+            <batch:step name="Batch_Step">
+                <logger message="#[payload]" level="INFO" doc:name="Logger"/>
+                <dw:transform-message metadata:id="3b9bbb9b-1ceb-478b-8ddb-55e7575487bd" doc:name="Transform Message">
+                    <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+{
+	id: {
+		"$oid": payload.id."$oid"
+	},
+	name: payload.name,
+	salary: payload.salary,
+	title: payload.title,
+	
+	gross: salary*3
+} as :object {
+	class : "mymule.ResultMap"
+}]]></dw:set-payload>
+                </dw:transform-message>
+                <logger level="INFO" doc:name="Logger" message="#[payload]"/>
+                <batch:commit doc:name="Batch Commit" size="2">
+                    <flow-ref name="Write_Final_DB" doc:name="Write Final_DB"/>
+                </batch:commit>
+            </batch:step>
+        </batch:process-records>
+        <batch:on-complete>
+            <logger message="#[payload]" level="INFO" doc:name="Logger"/>
+        </batch:on-complete>
+    </batch:job>
+
+
+
+
+
+
+</mule>
